@@ -1,0 +1,20 @@
+#! /bin/sh
+# ex: sts=8 sw=8 ts=8 noet
+set -eu -o pipefail
+
+if [ -n "${SYSTEMD_LIBS:-}" ]; then
+	LIB_LDFLAGS="${SYSTEMD_LIBS}"
+	LIB_CFLAGS="${SYSTEMD_CFLAGS}"
+else
+	PKGCONFIG_LIBS="libsystemd"
+fi
+
+PKGCONFIG_LIBS="${PKGCONFIG_LIBS:-} libevdev"
+# FIXME: libev has bugs in it's headers and as a result requires
+# no-strict-aliasing
+LIB_CFLAGS="${LIB_CFLAGS:-} -fno-strict-aliasing -Iccan"
+LIB_LDFLAGS="${LIB_LDFLAGS:-} -lev"
+
+. "$(dirname $0)/config.sh"
+
+bin openvpn-sd openvpn-sd.c
