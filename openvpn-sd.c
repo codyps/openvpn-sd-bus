@@ -13,7 +13,30 @@
 #include <stdlib.h>
 #include <string.h>
 
-const char *opts = "hl:p:";
+static int
+method_connect(sd_bus_message *m, void *userdata, sd_bus_error *ret_error)
+{
+	(void)userdata;
+	(void)ret_error;
+        return sd_bus_reply_method_return(m, "");
+}
+
+static int
+method_disconnect(sd_bus_message *m, void *userdata, sd_bus_error *ret_error)
+{
+	(void)userdata;
+	(void)ret_error;
+        return sd_bus_reply_method_return(m, "");
+}
+
+static const sd_bus_vtable openvpn_vtable[] = {
+        SD_BUS_VTABLE_START(0),
+        SD_BUS_METHOD("Connect", "", "", method_connect, SD_BUS_VTABLE_UNPRIVILEGED),
+        SD_BUS_METHOD("Disconnect", "", "", method_disconnect, SD_BUS_VTABLE_UNPRIVILEGED),
+        SD_BUS_VTABLE_END
+};
+
+static const char *opts = "hl:p:";
 
 #define streq(a, b) (!strcmp(a, b))
 
@@ -137,6 +160,60 @@ main(int argc, char *argv[])
 	}
 
 	/* TODO: setup our dbus connection thingy */
+	sd_bus_slot *slot = NULL;
+	sd_bus *bus = NULL;
+	int r;
+
+	/* Connect to the user bus this time */
+	r = sd_bus_open_user(&bus);
+	if (r < 0) {
+		fprintf(stderr, "Failed to connect to system bus: %s\n", strerror(-r));
+		goto finish;
+	}
+
+	/* Install the object */
+	r = sd_bus_add_object_vtable(bus,
+			&slot,
+			"/com/codyps/OpenVpn",  /* object path */
+			"com.codyps.OpenVpn",   /* interface name */
+			openvpn_vtable,
+			NULL);
+	if (r < 0) {
+		fprintf(stderr, "Failed to issue method call: %s\n", strerror(-r));
+		goto finish;
+	}
+
+	/* Take a well-known service name so that clients can find us */
+	r = sd_bus_request_name(bus, "com.codyps.OpenVpn", 0);
+	if (r < 0) {
+		fprintf(stderr, "Failed to acquire service name: %s\n", strerror(-r));
+		goto finish;
+	}
+
+	for (;;) {
+		/* Process requests */
+		r = sd_bus_process(bus, NULL);
+		if (r < 0) {
+			fprintf(stderr, "Failed to process bus: %s\n", strerror(-r));
+			goto finish;
+		}
+		if (r > 0) /* we processed a request, try to process another one, right-away */
+			continue;
+
+		/* Wait for the next request to process */
+		r = sd_bus_wait(bus, (uint64_t) -1);
+		if (r < 0) {
+			fprintf(stderr, "Failed to wait on bus: %s\n", strerror(-r));
+			goto finish;
+		}
+	}
+
+finish:
+	sd_bus_slot_unref(slot);
+	sd_bus_unref(bus);
+
+	return r < 0 ? EXIT_FAILURE : EXIT_SUCCESS;
+
 
 	/* TODO: ev loop including our socket and dbus's */
 
