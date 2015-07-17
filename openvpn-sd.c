@@ -195,7 +195,6 @@ main(int argc, char *argv[])
 		freeaddrinfo(res);
 	}
 
-	/* TODO: setup our dbus connection thingy */
 	sd_bus_slot *slot = NULL;
 	sd_bus *bus = NULL;
 	int r;
