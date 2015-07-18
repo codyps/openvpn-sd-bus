@@ -289,7 +289,7 @@ main(int argc, char *argv[])
 	sd_watcher.bus = bus;
 	ev_io_init(&sd_watcher.w, bus_cb, sd_bus_get_fd(bus), EV_READ);
 
-	struct ev__manage manage_watcher;
+	struct ev__manage manage_watcher = {};
 	ev_io_init(&manage_watcher.w, manage_cb, sfd, EV_READ);
 
 	ev_io_start(EV_DEFAULT_ &sd_watcher.w);
