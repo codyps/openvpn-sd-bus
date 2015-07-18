@@ -1,17 +1,47 @@
-#include <systemd/sd-bus.h>
 #include <ev.h>
+#include <systemd/sd-bus.h>
 
+#include <netdb.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <sys/un.h>
 #include <unistd.h>
 
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <sys/un.h>
-#include <netdb.h>
-
+#include <assert.h>
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+struct line_reader {
+	char buf[1024];
+	size_t pos;
+};
+
+static ssize_t
+feed(struct line_reader *restrict lr, char *restrict d, size_t l)
+{
+	if ((l + lr->pos) > sizeof(lr->buf)) {
+		return -ENOMEM;
+	}
+
+	memcpy(lr->buf + lr->pos, d, l);
+	char *end = memchr(lr->buf + lr->pos, '\n', l);
+	lr->pos += l;
+
+	if (end)
+		return end - lr->buf;
+	return 0;
+}
+
+static void
+eat(struct line_reader *restrict lr, size_t b)
+{
+	assert(b <= lr->pos);
+	size_t new = lr->pos - b;
+	memmove(lr->buf, lr->buf + b, new);
+	lr->pos = new;
+}
 
 static int
 method_connect(sd_bus_message *m, void *userdata, sd_bus_error *ret_error)
@@ -31,7 +61,8 @@ method_disconnect(sd_bus_message *m, void *userdata, sd_bus_error *ret_error)
         return sd_bus_reply_method_return(m, "");
 }
 
-static const sd_bus_vtable openvpn_vtable[] = {
+static const
+sd_bus_vtable openvpn_vtable[] = {
         SD_BUS_VTABLE_START(0),
         SD_BUS_METHOD("Connect", "", "", method_connect, SD_BUS_VTABLE_UNPRIVILEGED),
         SD_BUS_METHOD("Disconnect", "", "", method_disconnect, SD_BUS_VTABLE_UNPRIVILEGED),
@@ -43,16 +74,44 @@ struct ev__sdbus {
 	sd_bus *bus;
 };
 
+struct ev__manage {
+	ev_io w;
+	struct line_reader lr;
+};
+
 static void
 manage_cb(EV_P_ ev_io *w, int revents)
 {
 	(void)EV_A;
-	(void)w;
+	struct ev__manage *s = (struct ev__manage *)w;
 	(void)revents;
 
-	char buf[1024];
-	ssize_t r = read(w->fd, buf, sizeof(buf));
-	printf("MANAGE IT: got %zd\n", r);
+	ssize_t r = read(w->fd, s->lr.buf + s->lr.pos, sizeof(s->lr.buf) - s->lr.pos);
+	if (r < 0) {
+		fprintf(stderr, "read of manage socket failed: %s (%d)\n",
+				strerror(errno), errno);
+		exit(EXIT_FAILURE);
+	}
+
+	char *end = memchr(s->lr.buf + s->lr.pos, '\n', r);
+	s->lr.pos += r;
+
+	if (end) {
+		/* handle line */
+		printf("LINE: %.*s\n",
+				(int)(end - s->lr.buf), s->lr.buf);
+		eat(&s->lr, end - s->lr.buf + 1);
+	}
+	
+	if (s->lr.pos)
+		fprintf(stderr, "buffer contains %zu unused bytes\n",
+				s->lr.pos);
+
+	if (s->lr.pos == sizeof(s->lr.buf)) {
+		fprintf(stderr, "error: overfull buffer, we got a line longer than %zu bytes\n",
+				sizeof(s->lr.buf));
+		exit(EXIT_FAILURE);
+	}
 }
 
 static void
