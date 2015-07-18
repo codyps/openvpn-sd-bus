@@ -80,6 +80,37 @@ struct ev__manage {
 };
 
 static void
+process_line(char *line, size_t len)
+{
+	if (len == 0) {
+		printf("Empty, not expected\n");
+		return;
+	}
+
+	if (*line == '>') {
+		/* async, extract tag */
+		if (len == 1) {
+			printf("Only got '>', no tag\n");
+			return;
+		}
+
+		char *data = memchr(line + 1, ':', len - 1);
+		if (!data) {
+			printf("No data in line: %.*s\n", (int) len, line);
+			return;
+		}
+
+		printf("ASYNC with tag %.*s and data: %.*s\n",
+				(int)(data - line - 1), line + 1,
+				(int)(len - (data - line) - 1), data + 1);
+	} else {
+		/* normal? */
+		printf("LINE: %.*s\n",
+				(int)len, line);
+	}
+}
+
+static void
 manage_cb(EV_P_ ev_io *w, int revents)
 {
 	(void)EV_A;
@@ -98,11 +129,11 @@ manage_cb(EV_P_ ev_io *w, int revents)
 
 	if (end) {
 		/* handle line */
-		printf("LINE: %.*s\n",
-				(int)(end - s->lr.buf), s->lr.buf);
-		eat(&s->lr, end - s->lr.buf + 1);
+		size_t ll = end - s->lr.buf;
+		process_line(s->lr.buf, ll);
+		eat(&s->lr, ll + 1);
 	}
-	
+
 	if (s->lr.pos)
 		fprintf(stderr, "buffer contains %zu unused bytes\n",
 				s->lr.pos);
@@ -143,10 +174,10 @@ _usage(int e, const char *prgm_name)
 	fprintf(f,
 "usage: %s [options]\n"
 "options: %s\n"
-" -l <managment-host>\n"
-" -p <port>\n"
-"\n"
-"If <port> is 'unix', then <managment-host> is used as the path to the unix-socket",
+"  -l <managment-host>\n"
+"  -p <port>\n"
+" Or: \n"
+"  -p unix -l <unix-socket-path>\n",
 	prgm_name, opts);
 	exit(e);
 }
